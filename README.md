@@ -10,8 +10,8 @@ Works with Codex, Claude Code, and Gemini CLI:
 ```text
 Set up Moocp for this CLI. Follow
 https://raw.githubusercontent.com/ImArjunJ/moocp/main/SETUP.md
-and ask me for my Moodle URL if you don't already have it. Handle installation and MCP configuration;
-I'll complete the browser sign-in when it opens.
+and ask me for my Moodle URL if you don't already have it.
+Handle installation and MCP configuration; I'll complete the browser sign-in.
 ```
 
 Your agent handles the setup. You sign in through your university as usual.
@@ -31,3 +31,5 @@ Chrome, Chromium, or Edge is needed for sign-in.
 
 Then ask something like “what coursework is due this week?” or “find the lecture
 that explains this and cite it.” Publishing and submitting work get your review.
+
+Remove it with `moocp uninstall` (use the installed binary's full path if needed).

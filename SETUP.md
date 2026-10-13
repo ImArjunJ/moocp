@@ -88,3 +88,18 @@ alone is not proof of a working connection. State exactly which checks passed.
 
 Finish with one useful prompt, such as “what coursework is due this week?”
 Never run `moocp review` for the student or approve their coursework actions.
+
+## Remove it
+
+Run the installed executable with `uninstall`. It removes matching Codex, Claude,
+and Gemini registrations, saved credentials, private cache, isolated browsers,
+and the executable. Restart connected CLI sessions afterward.
+
+For a development checkout, keep the binary:
+
+```sh
+./target/debug/moocp --data-dir .moocp uninstall --keep-binary
+```
+
+Use `--profile NAME uninstall` to remove one account and keep other accounts.
+An executable still used by another registration or running Moocp session is kept.
