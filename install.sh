@@ -12,7 +12,7 @@ case "$(uname -s):$(uname -m)" in
     Linux:aarch64|Linux:arm64) task_target=aarch64-unknown-linux-gnu ;;
     Darwin:arm64) task_target=aarch64-apple-darwin ;;
     Darwin:x86_64) task_target=x86_64-apple-darwin ;;
-    *) fail "No native release for this machine. See https://github.com/ImArjunJ/moocp/blob/main/docs/SETUP.md for the source install." ;;
+    *) fail "No native release for this machine. See https://github.com/ImArjunJ/moocp/blob/main/SETUP.md for the source install." ;;
 esac
 
 task_install_dir=${MOOCP_INSTALL_DIR:-${XDG_BIN_HOME:-"$HOME/.local/bin"}}
@@ -39,7 +39,7 @@ fi
 tar -xzf "$task_temp/$task_asset" -C "$task_temp"
 [ -f "$task_temp/moocp" ] || fail 'The release archive contains no moocp executable.'
 chmod +x "$task_temp/moocp"
-"$task_temp/moocp" --version || fail 'This build cannot run here. Follow the source install in docs/SETUP.md.'
+"$task_temp/moocp" --version || fail 'This build cannot run here. Follow the source install in SETUP.md.'
 mkdir -p "$task_install_dir"
 # Stage beside the destination so replacement is atomic, including across disks.
 task_staged=$(mktemp "$task_install_dir/.moocp.XXXXXXXX")

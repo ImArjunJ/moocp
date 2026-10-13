@@ -11,3 +11,5 @@
 *.har
 *.log
 
+/dev/
+/docs/
