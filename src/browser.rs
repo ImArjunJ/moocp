@@ -154,6 +154,7 @@ impl Controller {
         }
         let directory = home.path.join(format!("browser-{}", uuid::Uuid::new_v4()));
         private_dir(&directory)?;
+        crate::config::mark_browser_directory(&directory, &profile)?;
         let mut builder = BrowserConfig::builder()
             .user_data_dir(&directory)
             .respect_https_errors()

@@ -57,6 +57,7 @@ pub async fn login(
     home.ensure()?;
     let directory = BrowserDirectory(home.path.join(format!("login-{}", uuid::Uuid::new_v4())));
     crate::config::private_dir(&directory.0)?;
+    crate::config::mark_browser_directory(&directory.0, profile)?;
     let mut builder = BrowserConfig::builder()
         .user_data_dir(&directory.0)
         .respect_https_errors()

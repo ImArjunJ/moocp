@@ -179,6 +179,13 @@ pub fn validate_profile_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn mark_browser_directory(path: &Path, profile: &Profile) -> Result<()> {
+    private_write(
+        &path.join("moocp-profile.json"),
+        &serde_json::to_vec(&serde_json::json!({"profile":profile.id,"name":profile.name}))?,
+    )
+}
+
 pub fn site_url(value: &str, allow_http: bool) -> Result<Url> {
     let mut url = Url::parse(value).map_err(|_| {
         Error::invalid("Provide a full Moodle URL, for example https://moodle.example.edu.")

@@ -243,3 +243,105 @@ async fn browser_snapshots_reviewed_form_interactions_and_stale_state() -> anyho
     http.abort();
     outcome
 }
+
+#[tokio::test]
+#[ignore = "requires installed Chromium"]
+async fn uninstall_closes_only_its_isolated_browser() -> anyhow::Result<()> {
+    let app = Router::new().route(
+        "/",
+        get(|| async {
+            axum::response::Html("<html><body><main>Student activity</main></body></html>")
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let url = site_url(&format!("http://{}/", listener.local_addr()?), true)?;
+    let http = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let directory = tempfile::tempdir()?;
+    let home = Home {
+        path: directory.path().join("removed"),
+    };
+    let other = Home {
+        path: directory.path().join("preserved"),
+    };
+    let profile = Profile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "test".into(),
+        url: url.clone(),
+        user_id: None,
+        display_name: None,
+        storage: CredentialStorage::File,
+        allow_http: true,
+        authenticated_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let credentials = Credentials {
+        cookies: vec![Cookie {
+            name: "MoodleSession".into(),
+            value: "fixture".into(),
+            domain: "127.0.0.1".into(),
+            path: "/".into(),
+            secure: false,
+            expires: None,
+        }],
+        ..Default::default()
+    };
+    let mut shared_profile = profile.clone();
+    shared_profile.id = uuid::Uuid::new_v4().to_string();
+    shared_profile.name = "other".into();
+    home.save_config(&moocp::config::Config {
+        active_profile: Some(profile.id.clone()),
+        profiles: vec![profile.clone(), shared_profile.clone()],
+    })?;
+    let mut removed = Controller::launch(
+        &home,
+        profile.clone(),
+        credentials.clone(),
+        url.clone(),
+        true,
+    )
+    .await?;
+    let mut shared = Controller::launch(
+        &home,
+        shared_profile,
+        credentials.clone(),
+        url.clone(),
+        true,
+    )
+    .await?;
+    let mut preserved = Controller::launch(&other, profile.clone(), credentials, url, true).await?;
+    let outcome = async {
+        let executable = directory.path().join("moocp");
+        std::fs::write(&executable, b"fixture")?;
+        moocp::uninstall::run(&home, Some(&profile.id), true, &executable, &[]).await?;
+        assert!(removed.snapshot().await.is_err());
+        assert!(
+            shared.snapshot().await?["text"]
+                .as_str()
+                .unwrap()
+                .contains("Student activity")
+        );
+        assert_eq!(
+            std::fs::read_dir(&home.path)?
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_name().to_string_lossy().starts_with("browser-"))
+                .count(),
+            1
+        );
+        moocp::uninstall::run(&home, None, true, &executable, &[]).await?;
+        assert!(!home.path.exists());
+        assert!(
+            preserved.snapshot().await?["text"]
+                .as_str()
+                .unwrap()
+                .contains("Student activity")
+        );
+        assert!(removed.snapshot().await.is_err());
+        assert!(shared.snapshot().await.is_err());
+        anyhow::Ok(())
+    }
+    .await;
+    removed.close().await;
+    shared.close().await;
+    preserved.close().await;
+    http.abort();
+    outcome
+}

@@ -82,6 +82,13 @@ enum Commands {
     Account { name: Option<String> },
     /// Remove local credentials and cached private account content.
     Logout,
+    /// Remove this installation's CLI entries, credentials, cache, and executable.
+    /// With --profile, remove just that account and keep the executable.
+    Uninstall {
+        /// Keep the executable for development or later reconnection.
+        #[arg(long)]
+        keep_binary: bool,
+    },
     /// Review an exact pending action in your own terminal and approve or reject it.
     Review {
         proposal_id: String,
@@ -286,6 +293,31 @@ pub async fn run() -> anyhow::Result<()> {
                 "Removed local credentials and cached content for {}. Moodle service tokens can also be revoked in your Moodle security settings.",
                 profile.name
             );
+        }
+        Commands::Uninstall { keep_binary } => {
+            let report = crate::uninstall::run(
+                &home,
+                cli.profile.as_deref(),
+                keep_binary,
+                &std::env::current_exe()?,
+                &crate::uninstall::client_files()?,
+            )
+            .await?;
+            println!(
+                "Removed {} MCP registrations and {} saved accounts.",
+                report.registrations, report.accounts
+            );
+            if report.kept_binary {
+                println!(
+                    "Kept the executable: {}.",
+                    report.retained_reason.unwrap_or("requested")
+                );
+            } else if report.deletion_pending {
+                println!("Windows will remove the executable when this command exits.");
+            } else {
+                println!("Removed the executable.");
+            }
+            println!("Restart any CLI sessions that had Moocp connected.");
         }
         Commands::Review {
             proposal_id,

@@ -39,6 +39,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zip = { version = "8", default-features = false, features = ["deflate"] }
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 
 [dev-dependencies]
 axum = "0.8"
