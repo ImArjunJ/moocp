@@ -1,0 +1,52 @@
+[package]
+name = "moocp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A native, student-oriented Moodle MCP client"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+chromiumoxide = "0.9.1"
+clap = { version = "4", features = ["derive", "env"] }
+directories = "6"
+ego-tree = "0.10"
+futures = "0.3"
+html-escape = "0.2"
+keyring = "4.2"
+md5 = "0.8"
+pdf-extract = "0.12"
+quick-xml = "0.38"
+regex = "1"
+reqwest = { version = "0.13", features = ["json", "form", "multipart", "cookies", "rustls"], default-features = false }
+rmcp = { version = "3.5.1", features = ["server", "transport-io", "elicitation"] }
+schemars = "1.2"
+rusqlite = { version = "0.38", features = ["bundled"] }
+scraper = "0.25"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = { version = "2", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+axum = "0.8"
+tempfile = "3"
+rmcp = { version = "3.5.1", features = ["client", "transport-child-process"] }
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+lto = "thin"
+strip = true
+

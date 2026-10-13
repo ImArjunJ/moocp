@@ -1,0 +1,13 @@
+/target/
+/.moocp/
+/.env
+/.env.*
+/dist/
+/credentials/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite*
+*.har
+*.log
+
