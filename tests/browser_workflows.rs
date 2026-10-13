@@ -257,8 +257,16 @@ async fn uninstall_closes_only_its_isolated_browser() -> anyhow::Result<()> {
     let url = site_url(&format!("http://{}/", listener.local_addr()?), true)?;
     let http = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let directory = tempfile::tempdir()?;
+    #[cfg(unix)]
+    let browser_root = {
+        let alias = directory.path().join("browser root with spaces");
+        std::os::unix::fs::symlink(directory.path(), &alias)?;
+        alias
+    };
+    #[cfg(windows)]
+    let browser_root = directory.path().to_owned();
     let home = Home {
-        path: directory.path().join("removed"),
+        path: browser_root.join("removed"),
     };
     let other = Home {
         path: directory.path().join("preserved"),

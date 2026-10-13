@@ -506,22 +506,6 @@ async fn stop_processes(scope: &Scope) -> Result<bool> {
             }
         })
         .collect();
-    // Include only descendants of those exact servers, and isolated browsers inside this data directory.
-    loop {
-        let before = targets.len();
-        for (pid, process) in system.processes() {
-            if *pid != own
-                && process
-                    .parent()
-                    .is_some_and(|parent| targets.contains(&parent))
-            {
-                targets.insert(*pid);
-            }
-        }
-        if targets.len() == before {
-            break;
-        }
-    }
     let directories: Vec<_> = if scope.root.exists() {
         fs::read_dir(&scope.root)?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -568,6 +552,22 @@ async fn stop_processes(scope: &Scope) -> Result<bool> {
                     targets.insert(*pid);
                 }
             }
+        }
+    }
+    // Include only descendants of those exact servers, and isolated browsers inside this data directory.
+    loop {
+        let before = targets.len();
+        for (pid, process) in system.processes() {
+            if *pid != own
+                && process
+                    .parent()
+                    .is_some_and(|parent| targets.contains(&parent))
+            {
+                targets.insert(*pid);
+            }
+        }
+        if targets.len() == before {
+            break;
         }
     }
     for pid in &targets {
@@ -622,31 +622,25 @@ async fn stop_processes(scope: &Scope) -> Result<bool> {
 }
 
 fn uses_browser_directory(args: &[std::ffi::OsString], directory: &Path) -> bool {
-    // Chrome flattens argv into one process-title string on Linux. Match a known
-    // private directory instead of trying to split potentially space-containing paths.
-    let absolute = directory.to_string_lossy();
-    let plain = absolute.strip_prefix("\\\\?\\").unwrap_or(&absolute);
-    let relative = std::env::current_dir().ok().and_then(|cwd| {
-        directory
-            .strip_prefix(cwd)
-            .ok()
-            .map(|path| path.to_string_lossy().into_owned())
-    });
-    let mut paths = vec![plain.to_owned()];
-    if let Some(relative) = relative {
-        paths.push(relative);
-    }
-    paths.into_iter().any(|path| {
-        let flag = format!("--user-data-dir={path}");
-        args.iter().any(|arg| {
-            let text = arg.to_string_lossy();
-            text.match_indices(&flag).any(|(index, _)| {
-                (index == 0 || matches!(text.as_bytes()[index - 1], b' ' | b'"'))
-                    && text
-                        .as_bytes()
-                        .get(index + flag.len())
-                        .is_none_or(|byte| matches!(byte, b' ' | b'"'))
-            })
+    // Chrome flattens argv on Linux. Resolve candidate paths rather than splitting
+    // on spaces: profile paths can contain spaces or use /var's macOS symlink.
+    let wanted = normalise(directory);
+    let flag = "--user-data-dir=";
+    args.iter().any(|arg| {
+        let text = arg.to_string_lossy();
+        text.match_indices(flag).any(|(index, _)| {
+            if index != 0 && !matches!(text.as_bytes()[index - 1], b' ' | b'"') {
+                return false;
+            }
+            let value = &text[index + flag.len()..];
+            value
+                .char_indices()
+                .filter_map(|(end, character)| matches!(character, ' ' | '"').then_some(end))
+                .chain([value.len()])
+                .any(|end| {
+                    let candidate = value[..end].trim_matches('"');
+                    !candidate.is_empty() && normalise(Path::new(candidate)) == wanted
+                })
         })
     })
 }
@@ -665,33 +659,6 @@ fn remove_executable(path: &Path) -> Result<bool> {
         remove_file(path)?;
     }
     Ok(false)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cargo_cleanup_requires_this_binary_in_the_installation_record() {
-        let directory = tempfile::tempdir().unwrap();
-        let bin = directory.path().join("bin");
-        fs::create_dir(&bin).unwrap();
-        let executable = bin.join("moocp");
-        fs::write(&executable, b"fixture").unwrap();
-        let metadata = directory.path().join(".crates.toml");
-        fs::write(
-            &metadata,
-            "[v1]\n'other 1.0.0 (registry+example)' = ['other']\n",
-        )
-        .unwrap();
-        assert!(cargo_install_root(&executable).unwrap().is_none());
-        fs::write(&metadata, "[v1]\n'moocp 0.1.0 (path+file:///example)' = ['moocp']\n'other 1.0.0 (registry+example)' = ['other']\n").unwrap();
-        assert_eq!(
-            cargo_install_root(&executable).unwrap(),
-            Some(directory.path().to_owned())
-        );
-        assert!(fs::read_to_string(metadata).unwrap().contains("other"));
-    }
 }
 
 #[cfg(windows)]
@@ -747,4 +714,31 @@ Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
             Error::local("Could not start Windows executable cleanup. Run uninstall again.")
         })?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cargo_cleanup_requires_this_binary_in_the_installation_record() {
+        let directory = tempfile::tempdir().unwrap();
+        let bin = directory.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let executable = bin.join("moocp");
+        fs::write(&executable, b"fixture").unwrap();
+        let metadata = directory.path().join(".crates.toml");
+        fs::write(
+            &metadata,
+            "[v1]\n'other 1.0.0 (registry+example)' = ['other']\n",
+        )
+        .unwrap();
+        assert!(cargo_install_root(&executable).unwrap().is_none());
+        fs::write(&metadata, "[v1]\n'moocp 0.1.0 (path+file:///example)' = ['moocp']\n'other 1.0.0 (registry+example)' = ['other']\n").unwrap();
+        assert_eq!(
+            cargo_install_root(&executable).unwrap(),
+            Some(directory.path().to_owned())
+        );
+        assert!(fs::read_to_string(metadata).unwrap().contains("other"));
+    }
 }
