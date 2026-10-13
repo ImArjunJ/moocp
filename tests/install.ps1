@@ -6,6 +6,7 @@ New-Item -ItemType Directory -Path $fixture -Force | Out-Null
 $asset = 'moocp-x86_64-pc-windows-msvc.zip'
 try {
     Copy-Item (Join-Path $repo 'target\debug\moocp.exe') (Join-Path $fixture 'moocp.exe')
+    $expectedVersion = & (Join-Path $fixture 'moocp.exe') --version
     Compress-Archive -Path (Join-Path $fixture 'moocp.exe') -DestinationPath (Join-Path $fixture $asset)
     $hash = (Get-FileHash (Join-Path $fixture $asset) -Algorithm SHA256).Hash.ToLowerInvariant()
     "$hash  $asset" | Set-Content (Join-Path $fixture "$asset.sha256")
@@ -17,7 +18,7 @@ try {
     & (Join-Path $repo 'install.ps1') -InstallDir $destination
     & (Join-Path $repo 'install.ps1') -InstallDir $destination
     $binary = Join-Path $destination 'moocp.exe'
-    if ((& $binary --version) -ne 'moocp 0.1.0') { throw 'Version check failed.' }
+    if ((& $binary --version) -ne $expectedVersion) { throw 'Version check failed.' }
     $before = (Get-FileHash $binary -Algorithm SHA256).Hash
     ('0' * 64 + "  $asset") | Set-Content (Join-Path $fixture "$asset.sha256")
     $rejected = $false

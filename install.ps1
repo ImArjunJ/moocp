@@ -9,6 +9,7 @@ $asset = 'moocp-x86_64-pc-windows-msvc.zip'
 $base = 'https://github.com/ImArjunJ/moocp/releases/latest/download'
 $temporary = Join-Path ([System.IO.Path]::GetTempPath()) ('moocp-' + [guid]::NewGuid())
 $staged = $null
+$backup = $null
 New-Item -ItemType Directory -Path $temporary | Out-Null
 try {
     Write-Host 'Downloading moocp for Windows…'
@@ -30,7 +31,9 @@ try {
     $staged = Join-Path $InstallDir ('.moocp-' + [guid]::NewGuid() + '.exe')
     Copy-Item -LiteralPath $binary -Destination $staged
     if (Test-Path -LiteralPath $destination -PathType Leaf) {
-        [System.IO.File]::Replace($staged, $destination, $null)
+        # PowerShell coerces a null string argument into an empty backup path.
+        $backup = Join-Path $InstallDir ('.moocp-previous-' + [guid]::NewGuid() + '.exe')
+        [System.IO.File]::Replace($staged, $destination, $backup)
     } else {
         [System.IO.File]::Move($staged, $destination)
     }
@@ -39,4 +42,5 @@ try {
 } finally {
     Remove-Item -LiteralPath $temporary -Recurse -Force
     if ($staged -and (Test-Path -LiteralPath $staged)) { Remove-Item -LiteralPath $staged -Force }
+    if ($backup -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Force }
 }
