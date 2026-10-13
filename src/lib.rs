@@ -1,3 +1,5 @@
+//! A local Moodle boundary for MCP clients. The host CLI owns models and local coursework.
+
 pub mod actions;
 pub mod auth;
 pub mod browser;

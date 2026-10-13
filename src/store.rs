@@ -1,3 +1,5 @@
+//! Account-scoped documents and search, plus a durable journal that prevents duplicate writes.
+
 use std::{path::Path, time::Duration};
 
 use rusqlite::{Connection, OptionalExtension, params};

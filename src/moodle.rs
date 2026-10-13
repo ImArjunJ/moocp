@@ -1,3 +1,5 @@
+//! Moodle contracts over REST, session AJAX, and verified forms; module and instance IDs stay distinct.
+
 use std::{collections::BTreeMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};

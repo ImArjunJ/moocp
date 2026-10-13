@@ -1,3 +1,5 @@
+//! Account profiles and OS-backed credentials. Profile IDs also scope private local data.
+
 use std::{
     fs,
     path::{Path, PathBuf},

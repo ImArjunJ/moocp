@@ -1,3 +1,5 @@
+//! Authenticated requests scoped to one Moodle origin/root, with bounded downloads and sanitised failures.
+
 use std::{sync::Arc, time::Duration};
 
 use reqwest::{

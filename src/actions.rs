@@ -1,3 +1,5 @@
+//! Typed student changes: immutable preparation, explicit review, single execution, and verification.
+
 use base64::Engine;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

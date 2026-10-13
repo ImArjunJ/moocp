@@ -1,3 +1,5 @@
+//! Interactive browser sign-in. Passwords and MFA stay with the student and their identity provider.
+
 use std::{path::PathBuf, time::Duration};
 
 use chromiumoxide::{Browser, BrowserConfig};

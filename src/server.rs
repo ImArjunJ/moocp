@@ -1,3 +1,5 @@
+//! MCP schemas, bounded retrieval, resources, and student review. Course content is untrusted data.
+
 use std::{
     collections::HashMap,
     path::PathBuf,
@@ -328,7 +330,21 @@ impl Server {
         annotations(read_only_hint = true)
     )]
     async fn moodle_get_course(&self, Parameters(args): Parameters<CourseArgs>) -> CallToolResult {
-        result(async{let outline=self.moodle()?.outline(args.course_id).await?;let activities=paged(outline.activities,args.offset,args.limit)?;Ok(json!({"course_id":args.course_id,"sections":outline.sections,"activities":activities,"transport":outline.transport,"warnings":outline.warnings,"observed_at":outline.observed_at}))}.await)
+        result(
+            async {
+                let outline = self.moodle()?.outline(args.course_id).await?;
+                let activities = paged(outline.activities, args.offset, args.limit)?;
+                Ok(json!({
+                    "course_id": args.course_id,
+                    "sections": outline.sections,
+                    "activities": activities,
+                    "transport": outline.transport,
+                    "warnings": outline.warnings,
+                    "observed_at": outline.observed_at,
+                }))
+            }
+            .await,
+        )
     }
     #[tool(
         description = "Read an activity's instructions, attachments, current restrictions, and available submission/attempt details. Does not start a quiz or submit coursework. Read this before preparing an action.",
@@ -352,7 +368,22 @@ impl Server {
         annotations(read_only_hint = true)
     )]
     async fn moodle_read(&self, Parameters(args): Parameters<ReadArgs>) -> CallToolResult {
-        result(async{let m=self.moodle()?;let d=self.document(&m,&args).await?;let slice=content::slice_text(&d.text,args.offset,args.limit)?;Ok(json!({"reference":d.reference,"resource_uri":format!("moodle://{}/document/{}",m.profile.id,d.reference),"title":d.title,"source_url":d.url,"observed_at":d.observed_at,"content":slice,"extraction_warnings":d.warnings,"extraction_truncated":d.truncated,"content_is_untrusted":true}))}.await)
+        result(async {
+            let moodle = self.moodle()?;
+            let document = self.document(&moodle, &args).await?;
+            let slice = content::slice_text(&document.text, args.offset, args.limit)?;
+            Ok(json!({
+                "reference": document.reference,
+                "resource_uri": format!("moodle://{}/document/{}", moodle.profile.id, document.reference),
+                "title": document.title,
+                "source_url": document.url,
+                "observed_at": document.observed_at,
+                "content": slice,
+                "extraction_warnings": document.warnings,
+                "extraction_truncated": document.truncated,
+                "content_is_untrusted": true,
+            }))
+        }.await)
     }
     #[tool(
         description = "Search successfully extracted local course documents with source links and passages. This is lexical search: all query words must match. Coverage is explicit. Use moodle_index_course to index more material and moodle_read to inspect matches.",
@@ -559,29 +590,57 @@ impl Server {
     ) -> CallToolResult {
         result(
             async {
-                let moodle=self.moodle()?;
-                let proposal=Store::open(&self.home)?.proposal(&args.proposal_id)?;
-                if proposal["profile"]!=moodle.profile.id {return Err(Error::new("account_mismatch","This proposal belongs to another account."));}
-                if proposal["status"]=="succeeded" { return Ok(proposal["receipt"].clone()); }
-                let supports_review=context.client_capabilities().is_some_and(|c|c.elicitation.as_ref().is_some_and(|e|e.form.is_some()));
-                if proposal["status"]=="prepared" && supports_review {
-                    let preview=serde_json::to_string_pretty(&proposal["preview"])?;
-                    if preview.len()>12_000 {return Err(Error::new("terminal_review_required","This preview is too large for an in-client review. Review the entire proposal using moocp review."));}
-                    let schema=serde_json::from_value(json!({"type":"object","properties":{"approve":{"type":"boolean","title":"Approve this exact Moodle action"}},"required":["approve"]}))?;
-                    let answer=context.peer.create_elicitation_with_timeout(ElicitRequestParams::FormElicitationParams{meta:None,message:format!("Review the exact Moodle action below. Approval applies only to this proposal and expires after 30 minutes.\n\n{preview}"),requested_schema:schema},Some(std::time::Duration::from_secs(300))).await
-                        .map_err(|_|Error::new("review_unavailable","Your CLI did not complete the review. Moodle was not changed; use moocp review to continue."))?;
-                    if answer.action!=ElicitationAction::Accept || answer.content.as_ref().and_then(|c|c["approve"].as_bool())!=Some(true) {
-                        Store::open(&self.home)?.finish(&args.proposal_id,"rejected",&json!({"reason":"Student declined the in-client review."}))?;
-                        return Err(Error::new("action_rejected","You declined this action. Moodle was not changed."));
+                let moodle = self.moodle()?;
+                let proposal = Store::open(&self.home)?.proposal(&args.proposal_id)?;
+                if proposal["profile"] != moodle.profile.id {
+                    return Err(Error::new("account_mismatch", "This proposal belongs to another account."));
+                }
+                if proposal["status"] == "succeeded" {
+                    return Ok(proposal["receipt"].clone());
+                }
+                let supports_review = context.client_capabilities().is_some_and(|capabilities| {
+                    capabilities.elicitation.as_ref().is_some_and(|review| review.form.is_some())
+                });
+                if proposal["status"] == "prepared" && supports_review {
+                    let preview = serde_json::to_string_pretty(&proposal["preview"])?;
+                    if preview.len() > 12_000 {
+                        return Err(Error::new("terminal_review_required", "This preview is too large for an in-client review. Review the entire proposal using moocp review."));
+                    }
+                    let schema = serde_json::from_value(json!({
+                        "type": "object",
+                        "properties": {
+                            "approve": {"type": "boolean", "title": "Approve this exact Moodle action"}
+                        },
+                        "required": ["approve"],
+                    }))?;
+                    // This response comes from the client's student review UI, not tool arguments.
+                    let answer = context.peer.create_elicitation_with_timeout(
+                        ElicitRequestParams::FormElicitationParams {
+                            meta: None,
+                            message: format!("Review the exact Moodle action below. Approval applies only to this proposal and expires after 30 minutes.\n\n{preview}"),
+                            requested_schema: schema,
+                        },
+                        Some(std::time::Duration::from_secs(300)),
+                    ).await.map_err(|_| Error::new("review_unavailable", "Your CLI did not complete the review. Moodle was not changed; use moocp review to continue."))?;
+                    let approved_by_student = answer.action == ElicitationAction::Accept
+                        && answer.content.as_ref().and_then(|content| content["approve"].as_bool()) == Some(true);
+                    if !approved_by_student {
+                        Store::open(&self.home)?.finish(
+                            &args.proposal_id, "rejected",
+                            &json!({"reason": "Student declined the in-client review."}),
+                        )?;
+                        return Err(Error::new("action_rejected", "You declined this action. Moodle was not changed."));
                     }
                     Store::open(&self.home)?.approve(&args.proposal_id)?;
                 }
-                if proposal["payload"]["browser"]==true {
-                    let mut slot=self.browser.lock().await;
-                    let controller=slot.as_mut().ok_or_else(||Error::new("browser_not_open","Open the compatibility browser first; old sessions cannot replay actions."))?;
-                    controller.check_account(&moodle.profile,&self.home.credentials(&moodle.profile)?)?;
-                    controller.execute(&self.home,&args.proposal_id).await
-                }else{crate::actions::execute(&moodle, &self.home, &args.proposal_id).await}
+                if proposal["payload"]["browser"] == true {
+                    let mut slot = self.browser.lock().await;
+                    let controller = slot.as_mut().ok_or_else(|| Error::new("browser_not_open", "Open the compatibility browser first; old sessions cannot replay actions."))?;
+                    controller.check_account(&moodle.profile, &self.home.credentials(&moodle.profile)?)?;
+                    controller.execute(&self.home, &args.proposal_id).await
+                } else {
+                    crate::actions::execute(&moodle, &self.home, &args.proposal_id).await
+                }
             }
                 .await,
         )

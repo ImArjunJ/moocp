@@ -1,3 +1,5 @@
+//! Bounded document extraction with source locations and explicit limits for visual or binary content.
+
 use std::{
     io::{Cursor, Read},
     path::Path,

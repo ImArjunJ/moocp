@@ -1,3 +1,5 @@
+//! Stable user-facing errors. Upstream request details must not expose session or token URLs.
+
 use serde::Serialize;
 use thiserror::Error;
 

@@ -1,3 +1,5 @@
+//! Native setup and client registration, with absolute server paths and preserved existing settings.
+
 use std::{
     io::{self, IsTerminal, Read, Write},
     path::PathBuf,
