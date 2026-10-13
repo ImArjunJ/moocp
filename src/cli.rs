@@ -449,10 +449,28 @@ fn server_command(home: &Home, profile: Option<&str>) -> anyhow::Result<(String,
     Ok((executable.to_string_lossy().into_owned(), args))
 }
 fn installed(command: &str) -> bool {
-    Command::new(command)
+    client_command(command)
         .arg("--version")
         .output()
         .is_ok_and(|o| o.status.success())
+}
+
+fn client_command(name: &str) -> Command {
+    // npm installs .cmd shims on Windows; Rust only infers the .exe extension.
+    #[cfg(windows)]
+    if let Some(path) = std::env::var_os("PATH").and_then(|path| windows_client_path(name, &path)) {
+        return Command::new(path);
+    }
+    Command::new(name)
+}
+
+#[cfg(any(windows, test))]
+fn windows_client_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .flat_map(|directory| {
+            ["exe", "cmd", "bat"].map(|extension| directory.join(format!("{name}.{extension}")))
+        })
+        .find(|candidate| candidate.is_file())
 }
 fn pick_client() -> Option<ClientArg> {
     let choices = [
@@ -500,7 +518,7 @@ fn install(home: &Home, profile: &Profile, client: ClientArg, replace: bool) -> 
             } else {
                 "claude"
             };
-            let exists = Command::new(cmd)
+            let exists = client_command(cmd)
                 .args(["mcp", "get", &name])
                 .output()?
                 .status
@@ -509,7 +527,7 @@ fn install(home: &Home, profile: &Profile, client: ClientArg, replace: bool) -> 
                 return Err(Error::new("existing_connection",format!("{cmd} already has a {name} server. Its configuration was preserved. Use moocp install {cmd} --replace to replace that entry.")).into());
             }
             if exists && matches!(client, ClientArg::Claude) {
-                let status = Command::new(cmd)
+                let status = client_command(cmd)
                     .args(["mcp", "remove", "--scope", "user", &name])
                     .status()?;
                 if !status.success() {
@@ -518,7 +536,7 @@ fn install(home: &Home, profile: &Profile, client: ClientArg, replace: bool) -> 
                     );
                 }
             }
-            let mut command = Command::new(cmd);
+            let mut command = client_command(cmd);
             command.args(["mcp", "add"]);
             if matches!(client, ClientArg::Claude) {
                 command.args(["--scope", "user", "--transport", "stdio"]);
@@ -575,6 +593,27 @@ fn install(home: &Home, profile: &Profile, client: ClientArg, replace: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn finds_windows_npm_shims_without_changing_the_process_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let shim = directory.path().join("codex.cmd");
+        std::fs::write(&shim, "@echo off\r\necho %1\r\n").unwrap();
+        let path = std::env::join_paths([directory.path()]).unwrap();
+        assert_eq!(windows_client_path("codex", &path), Some(shim.clone()));
+        #[cfg(windows)]
+        {
+            let output = Command::new(&shim)
+                .arg("spaces & literal")
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert!(String::from_utf8_lossy(&output.stdout).contains("spaces & literal"));
+        }
+        let executable = directory.path().join("codex.exe");
+        std::fs::write(&executable, b"fixture").unwrap();
+        assert_eq!(windows_client_path("codex", &path), Some(executable));
+        assert!(windows_client_path("claude", &path).is_none());
+    }
     #[test]
     fn account_names_are_safe_for_cli_config() {
         assert!(validate_name("university-2026").is_ok());
