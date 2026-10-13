@@ -6,6 +6,8 @@ rust-version = "1.88"
 description = "A native, student-oriented Moodle MCP client"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/ImArjunJ/moocp"
+keywords = ["moodle", "mcp", "education", "cli"]
 
 [dependencies]
 anyhow = "1"
