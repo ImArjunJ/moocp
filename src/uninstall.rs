@@ -108,7 +108,9 @@ impl Scope {
     }
 
     fn owns_process(&self, command: &str, args: &[String]) -> bool {
-        self.is_executable(command) && self.matches_data(args)
+        // Linux keeps the previous inode running after an atomic update.
+        self.is_executable(command.strip_suffix(" (deleted)").unwrap_or(command))
+            && self.matches_data(args)
     }
 
     fn matches_data(&self, args: &[String]) -> bool {
@@ -283,6 +285,7 @@ pub async fn run(
     executable: &Path,
     files: &[ClientFile],
 ) -> Result<Report> {
+    let _update_lock = crate::update::UpdateLock::acquire(executable)?;
     let mut config = home.config()?;
     let accounts: Vec<Profile> = config
         .profiles
@@ -371,6 +374,7 @@ pub async fn run(
     let deletion_pending = if kept_binary {
         false
     } else {
+        crate::update::remove_staging(&scope.executable)?;
         remove_executable(executable)?
     };
     Ok(Report {
@@ -484,9 +488,11 @@ async fn stop_processes(scope: &Scope) -> Result<bool> {
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
         *pid != own
-            && process
-                .exe()
-                .is_some_and(|path| normalise(path) == scope.executable)
+            && process.exe().is_some_and(|path| {
+                let text = path.to_string_lossy();
+                normalise(Path::new(text.strip_suffix(" (deleted)").unwrap_or(&text)))
+                    == scope.executable
+            })
             && !scope.owns_process(&scope.executable.to_string_lossy(), &args)
     });
     let mut targets: BTreeSet<_> = system
@@ -658,6 +664,7 @@ fn remove_executable(path: &Path) -> Result<bool> {
     } else {
         remove_file(path)?;
     }
+    remove_file(&crate::update::lock_path(path))?;
     Ok(false)
 }
 
@@ -672,7 +679,7 @@ fn remove_executable(path: &Path) -> Result<bool> {
     let cargo_root = cargo_install_root(path)?;
     private_write(
         &script,
-        br#"param([int]$ProcessId, [string]$Executable, [string]$CargoRoot)
+        br#"param([int]$ProcessId, [string]$Executable, [string]$CargoRoot, [string]$UpdateLock)
 $ErrorActionPreference = 'Stop'
 Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
 for ($attempt = 0; $attempt -lt 100; $attempt++) {
@@ -684,6 +691,7 @@ for ($attempt = 0; $attempt -lt 100; $attempt++) {
         break
     } catch { Start-Sleep -Milliseconds 100 }
 }
+if (-not (Test-Path -LiteralPath $Executable)) { Remove-Item -LiteralPath $UpdateLock -Force -ErrorAction SilentlyContinue }
 Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
 "#,
     )?;
@@ -700,7 +708,9 @@ Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
         .arg("-ProcessId")
         .arg(std::process::id().to_string())
         .arg("-Executable")
-        .arg(path);
+        .arg(path)
+        .arg("-UpdateLock")
+        .arg(crate::update::lock_path(path));
     if let Some(root) = cargo_root {
         command.arg("-CargoRoot").arg(root);
     }

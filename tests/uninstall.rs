@@ -223,8 +223,15 @@ async fn stops_only_servers_for_the_removed_data_directory() -> anyhow::Result<(
     let other = directory.path().join("other");
     let mut owned = start_server(&binary, &home.path).await?;
     let mut preserved = start_server(&binary, &other).await?;
-    let result = uninstall::run(&home, None, true, &binary, &[]).await?;
+    #[cfg(unix)]
+    {
+        let replacement = directory.path().join("replacement");
+        std::fs::copy(&binary, &replacement)?;
+        std::fs::rename(replacement, &binary)?;
+    }
+    let result = uninstall::run(&home, None, false, &binary, &[]).await?;
     assert!(result.kept_binary);
+    assert_eq!(result.retained_reason, Some("other running processes"));
     tokio::time::timeout(Duration::from_secs(2), owned.wait()).await??;
     assert!(preserved.try_wait()?.is_none());
     preserved.kill().await?;
@@ -239,6 +246,17 @@ async fn cli_uninstall_removes_its_own_copied_executable() -> anyhow::Result<()>
         .path()
         .join(if cfg!(windows) { "moocp.exe" } else { "moocp" });
     std::fs::copy(env!("CARGO_BIN_EXE_moocp"), &binary)?;
+    let lock = directory.path().join(format!(
+        ".{}.update.lock",
+        binary.file_name().unwrap().to_string_lossy()
+    ));
+    let failed_update = directory.path().join(".moocp-update-leftover");
+    std::fs::create_dir(&failed_update)?;
+    std::fs::write(
+        failed_update.join("target.json"),
+        serde_json::to_vec(&binary.canonicalize()?)?,
+    )?;
+    std::fs::write(failed_update.join("previous"), b"old update backup")?;
     let home = Home {
         path: directory.path().join("data"),
     };
@@ -255,7 +273,7 @@ async fn cli_uninstall_removes_its_own_copied_executable() -> anyhow::Result<()>
         String::from_utf8_lossy(&output.stderr)
     );
     for _ in 0..100 {
-        if !binary.exists() {
+        if !binary.exists() && !lock.exists() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -266,5 +284,7 @@ async fn cli_uninstall_removes_its_own_copied_executable() -> anyhow::Result<()>
         String::from_utf8_lossy(&output.stdout)
     );
     assert!(!home.path.exists());
+    assert!(!lock.exists());
+    assert!(!failed_update.exists());
     Ok(())
 }

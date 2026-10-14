@@ -89,6 +89,12 @@ enum Commands {
         #[arg(long)]
         keep_binary: bool,
     },
+    /// Install the latest verified native release at this executable's current path.
+    Update {
+        /// Check for a newer release without installing it.
+        #[arg(long)]
+        check: bool,
+    },
     /// Review an exact pending action in your own terminal and approve or reject it.
     Review {
         proposal_id: String,
@@ -120,6 +126,12 @@ pub async fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let home = Home::discover(cli.data_dir)?;
     match cli.command {
+        Commands::Update { check } => {
+            let report = crate::update::Updater::github()?
+                .run(&std::env::current_exe()?, env!("CARGO_PKG_VERSION"), check)
+                .await?;
+            println!("{report}");
+        }
         Commands::Serve => crate::server::serve(home, cli.profile).await?,
         Commands::Setup {
             url,
