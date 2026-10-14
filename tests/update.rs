@@ -308,7 +308,47 @@ async fn check_and_newer_builds_never_download_or_replace() -> anyhow::Result<()
 #[tokio::test]
 async fn verified_update_preserves_install_path_accounts_and_other_servers() -> anyhow::Result<()> {
     let fixture = Fixture::new(VERSION, release_archive(), false, false, false).await?;
+    #[cfg(windows)]
+    let mut server = {
+        use std::process::Stdio;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        fs::copy(env!("CARGO_BIN_EXE_moocp"), &fixture.executable)?;
+        let mut server = tokio::process::Command::new(&fixture.executable)
+            .arg("--data-dir")
+            .arg(fixture.directory.path().join("server data"))
+            .arg("serve")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()?;
+        server.stdin.as_mut().unwrap().write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":\"update-test\",\"version\":\"1\"}}}\n").await?;
+        let mut reader = tokio::io::BufReader::new(server.stdout.take().unwrap());
+        let mut line = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            reader.read_line(&mut line),
+        )
+        .await??;
+        assert!(serde_json::from_str::<Value>(&line)?["result"].is_object());
+        server
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
+            .await?;
+        server
+    };
     assert_eq!(apply(&fixture).await?, "updated");
+    #[cfg(windows)]
+    {
+        assert!(
+            server.try_wait()?.is_none(),
+            "Updating must not terminate connected servers."
+        );
+        server.kill().await?;
+        server.wait().await?;
+    }
     for _ in 0..200 {
         if fixture.stages() == 0 {
             break;
@@ -326,6 +366,34 @@ async fn verified_update_preserves_install_path_accounts_and_other_servers() -> 
         format!("moocp {VERSION}")
     );
     fixture.unchanged_data();
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "downloads the latest public release into a disposable installation"]
+async fn public_release_update() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::Builder::new()
+        .prefix("moocp public update ")
+        .tempdir()?;
+    let executable = directory.path().join("moocp");
+    fs::write(&executable, b"previous release")?;
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o755))?;
+    let report = Updater::github()?.run(&executable, "0.0.0", false).await?;
+    let Report::Updated { latest, .. } = report else {
+        panic!("{report:?}")
+    };
+    let output = tokio::process::Command::new(&executable)
+        .arg("--version")
+        .output()
+        .await?;
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout)?.trim(),
+        format!("moocp {latest}")
+    );
+    println!("Verified public download, replacement, and executable version: {latest}.");
     Ok(())
 }
 

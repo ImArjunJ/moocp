@@ -152,6 +152,11 @@ impl Updater {
     pub async fn run(&self, executable: &Path, installed: &str, check: bool) -> Result<Report> {
         let installed =
             Version::parse(installed).map_err(|_| Error::invalid("Invalid installed version."))?;
+        let original_hash = if check {
+            None
+        } else {
+            Some(file_hash(executable)?)
+        };
         let body = self.download(&self.release_url, 1024 * 1024).await?;
         let release: Release = serde_json::from_slice(&body)?;
         let latest = Version::parse(release.tag_name.strip_prefix('v').ok_or_else(|| {
@@ -177,7 +182,9 @@ impl Updater {
         }
         let executable = executable.canonicalize()?;
         let _lock = UpdateLock::acquire(&executable)?;
-        let original_hash = file_hash(&executable)?;
+        let original_hash =
+            original_hash.ok_or_else(|| Error::invalid("A check cannot install an update."))?;
+        unchanged(&executable, &original_hash)?;
         let parent = executable
             .parent()
             .ok_or_else(|| Error::local("Cannot find the installation directory."))?;
@@ -197,18 +204,14 @@ impl Updater {
                 "Release checksum did not match. The installed version was kept.",
             ));
         }
+        unchanged(&executable, &original_hash)?;
         let candidate = stage
             .path()
             .join(if cfg!(windows) { "moocp.exe" } else { "moocp" });
         extract(&archive, extension, &candidate)?;
         fs::set_permissions(&candidate, fs::metadata(&executable)?.permissions())?;
         verify_version(&candidate, &latest).await?;
-        if file_hash(&executable)? != original_hash {
-            return Err(Error::new(
-                "update_changed",
-                "Moocp changed during the download. Run update again.",
-            ));
-        }
+        unchanged(&executable, &original_hash)?;
         #[cfg(not(windows))]
         {
             replace_unix(&executable, &candidate, stage, &latest).await?;
@@ -464,6 +467,16 @@ fn file_hash(path: &Path) -> Result<String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
+fn unchanged(executable: &Path, expected: &str) -> Result<()> {
+    if file_hash(executable).ok().as_deref() != Some(expected) {
+        return Err(Error::new(
+            "update_changed",
+            "Moocp changed during the download. Run update again.",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) struct UpdateLock {
     _file: File,
 }
@@ -583,6 +596,6 @@ fn replace_windows(
                 "Could not start Windows replacement. The installed version was kept.",
             )
         })?;
-    stage.keep();
+    let _ = stage.keep();
     Ok(log)
 }
