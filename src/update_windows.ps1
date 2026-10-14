@@ -21,9 +21,17 @@ try {
             Start-Sleep -Milliseconds 500
         }
     }
-    $output = Join-Path $PSScriptRoot 'version.txt'
-    $probe = Start-Process -FilePath $Executable -ArgumentList '--version' -NoNewWindow -PassThru `
-        -RedirectStandardOutput $output -RedirectStandardError (Join-Path $PSScriptRoot 'version-error.txt')
+    # Start-Process can lose its process handle and report a null ExitCode in Windows PowerShell.
+    $probe = New-Object System.Diagnostics.Process
+    $probe.StartInfo.FileName = $Executable
+    $probe.StartInfo.Arguments = '--version'
+    $probe.StartInfo.UseShellExecute = $false
+    $probe.StartInfo.CreateNoWindow = $true
+    $probe.StartInfo.RedirectStandardOutput = $true
+    $probe.StartInfo.RedirectStandardError = $true
+    $null = $probe.Start()
+    $output = $probe.StandardOutput.ReadToEndAsync()
+    $errors = $probe.StandardError.ReadToEndAsync()
     if (-not $probe.WaitForExit(15000)) {
         $probe.Kill()
         $probe.WaitForExit()
@@ -31,10 +39,11 @@ try {
     }
     # Read ExitCode before disposing the process handle.
     $exitCode = $probe.ExitCode
+    $versionText = $output.Result
+    $null = $errors.Result
     $probe.Dispose()
     $probe = $null
-    if ($exitCode -ne 0 -or (Get-Item -LiteralPath $output).Length -gt 128 -or
-        (Get-Content -LiteralPath $output -Raw).Trim() -ne "moocp $Version") {
+    if ($exitCode -ne 0 -or $versionText.Length -gt 128 -or $versionText.Trim() -ne "moocp $Version") {
         throw 'The updated executable failed its version check.'
     }
     $success = $true

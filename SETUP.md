@@ -13,6 +13,9 @@ Find an existing `moocp` executable, or check its normal install location below.
 If present, run `moocp update --check` and install an available release with
 `moocp update`. If this older executable has no update command, rerun the native
 installer at the same location. Then run `moocp status --check`.
+If Windows reports a staged update, tell the student to restart connected CLI
+sessions, then verify `moocp --version` in the new session. Do not claim the new
+version is installed while replacement is pending.
 A healthy connection only needs client
 registration; an expired saved account needs `moocp login`, not a new profile.
 Keep existing accounts and other MCP entries.
