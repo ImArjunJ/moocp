@@ -348,6 +348,7 @@ async fn verified_update_preserves_install_path_accounts_and_other_servers() -> 
         );
         server.kill().await?;
         server.wait().await?;
+        drop(server);
     }
     for _ in 0..200 {
         if fixture.stages() == 0 {

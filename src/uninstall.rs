@@ -109,8 +109,19 @@ impl Scope {
 
     fn owns_process(&self, command: &str, args: &[String]) -> bool {
         // Linux keeps the previous inode running after an atomic update.
-        self.is_executable(command.strip_suffix(" (deleted)").unwrap_or(command))
-            && self.matches_data(args)
+        let executable = command.strip_suffix(" (deleted)").unwrap_or(command);
+        let backup = Path::new(executable);
+        let running_previous = backup
+            .file_name()
+            .is_some_and(|name| name == "previous.exe")
+            && backup
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name.to_string_lossy().starts_with(".moocp-update-"))
+            && args
+                .first()
+                .is_some_and(|arg| normalise(Path::new(arg)) == self.executable);
+        (self.is_executable(executable) || running_previous) && self.matches_data(args)
     }
 
     fn matches_data(&self, args: &[String]) -> bool {

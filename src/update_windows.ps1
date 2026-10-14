@@ -60,7 +60,17 @@ try {
 } finally {
     if ($lock) { $lock.Dispose() }
     if ($success) {
-        Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
-        Remove-Item -LiteralPath $FailureLog -Force
+        # A replaced executable can remain mapped until the old CLI releases its process handle.
+        for ($attempt = 0; $attempt -lt 120; $attempt++) {
+            try {
+                Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
+                Remove-Item -LiteralPath $FailureLog -Force
+                break
+            } catch {
+                if ($attempt -eq 119) {
+                    'Update installed. Restart connected CLI sessions to release the previous executable; uninstall also clears the saved update files.' | Set-Content -LiteralPath $FailureLog
+                } else { Start-Sleep -Milliseconds 500 }
+            }
+        }
     }
 }
