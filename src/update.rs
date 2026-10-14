@@ -70,7 +70,7 @@ impl std::fmt::Display for Report {
                 log,
             } => write!(
                 f,
-                "Verified Moocp {latest} (installed: {installed}). Windows will replace it after this command exits.\nRestart connected CLI sessions to release the executable. Cleanup waits up to one minute; if updating fails, the previous version is kept or restored.\nFailure details: {}",
+                "Verified Moocp {latest} (installed: {installed}). Windows will replace it after this command exits.\nRestart connected CLI sessions to release the executable. Replacement waits up to one minute and backs up the previous executable.\nIf it fails, details are saved at: {}",
                 log.display()
             ),
         }
@@ -483,12 +483,14 @@ pub(crate) struct UpdateLock {
 impl UpdateLock {
     pub(crate) fn acquire(executable: &Path) -> Result<Self> {
         let path = lock_path(executable);
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)?;
+        let mut options = fs::OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options.open(path)?;
         fs2::FileExt::try_lock_exclusive(&file).map_err(|_| {
             Error::new(
                 "update_busy",
@@ -523,6 +525,11 @@ pub(crate) fn remove_staging(executable: &Path) -> Result<()> {
                 .is_some_and(|path| path == executable)
         {
             fs::remove_dir_all(entry.path())?;
+            match fs::remove_file(entry.path().with_extension("failure.txt")) {
+                Ok(()) => (),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
         }
     }
     Ok(())
@@ -563,7 +570,8 @@ fn replace_windows(
 ) -> Result<PathBuf> {
     use std::{os::windows::process::CommandExt, process::Command};
     let script = stage.path().join("replace.ps1");
-    let log = stage.path().join("failure.txt");
+    // Keep helper errors outside staging so an open stderr handle cannot block cleanup.
+    let log = stage.path().with_extension("failure.txt");
     crate::config::private_write(&script, include_bytes!("update_windows.ps1"))?;
     let lock = lock_path(executable);
     Command::new("powershell.exe")
@@ -574,21 +582,23 @@ fn replace_windows(
             "Bypass",
             "-File",
         ])
-        .arg(&script)
+        .arg(powershell_path(&script))
         .arg("-ProcessId")
         .arg(std::process::id().to_string())
         .arg("-Executable")
-        .arg(executable)
+        .arg(powershell_path(executable))
         .arg("-Version")
         .arg(latest.to_string())
         .arg("-OriginalHash")
         .arg(original_hash)
         .arg("-LockFile")
-        .arg(lock)
+        .arg(powershell_path(&lock))
+        .arg("-FailureLog")
+        .arg(powershell_path(&log))
         .creation_flags(0x08000000)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(File::create(&log)?))
         .spawn()
         .map_err(|_| {
             Error::new(
@@ -597,5 +607,22 @@ fn replace_windows(
             )
         })?;
     let _ = stage.keep();
-    Ok(log)
+    Ok(powershell_path(&log))
+}
+
+#[cfg(windows)]
+fn powershell_path(path: &Path) -> PathBuf {
+    use std::{
+        ffi::OsString,
+        os::windows::ffi::{OsStrExt, OsStringExt},
+    };
+    // PowerShell's -File parser does not understand Windows verbatim path prefixes.
+    let wide: Vec<_> = path.as_os_str().encode_wide().collect();
+    if wide.starts_with(&[92, 92, 63, 92, 85, 78, 67, 92]) {
+        PathBuf::from(OsString::from_wide(&[&[92, 92], &wide[8..]].concat()))
+    } else if wide.starts_with(&[92, 92, 63, 92]) {
+        PathBuf::from(OsString::from_wide(&wide[4..]))
+    } else {
+        path.to_owned()
+    }
 }

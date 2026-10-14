@@ -355,7 +355,12 @@ async fn verified_update_preserves_install_path_accounts_and_other_servers() -> 
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    assert_eq!(fixture.stages(), 0);
+    let diagnostics: Vec<_> = fs::read_dir(fixture.directory.path())?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with("failure.txt"))
+        .map(|entry| fs::read_to_string(entry.path()).unwrap_or_default())
+        .collect();
+    assert_eq!(fixture.stages(), 0, "{diagnostics:?}");
     let output = tokio::process::Command::new(&fixture.executable)
         .arg("--version")
         .output()

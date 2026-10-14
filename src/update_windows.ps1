@@ -1,4 +1,4 @@
-param([int]$ProcessId, [string]$Executable, [string]$Version, [string]$OriginalHash, [string]$LockFile)
+param([int]$ProcessId, [string]$Executable, [string]$Version, [string]$OriginalHash, [string]$LockFile, [string]$FailureLog)
 $ErrorActionPreference = 'Stop'
 $lock = $null
 $probe = $null
@@ -47,8 +47,11 @@ try {
             $message += ' The previous version was restored.'
         } catch { $message += " Rollback could not finish. Previous executable: $backup" }
     }
-    $message | Set-Content -LiteralPath (Join-Path $PSScriptRoot 'failure.txt')
+    $message | Set-Content -LiteralPath $FailureLog
 } finally {
     if ($lock) { $lock.Dispose() }
-    if ($success) { Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force }
+    if ($success) {
+        Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
+        Remove-Item -LiteralPath $FailureLog -Force
+    }
 }
