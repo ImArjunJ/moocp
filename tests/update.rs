@@ -228,17 +228,13 @@ async fn apply(fixture: &Fixture) -> anyhow::Result<String> {
     let outcome = fixture.directory.path().join("outcome.json");
     let params =
         json!({"source":fixture.server.root,"executable":fixture.executable,"outcome":outcome});
-    let output = tokio::process::Command::new(std::env::current_exe()?)
+    let status = tokio::process::Command::new(std::env::current_exe()?)
         .args(["--exact", "windows_update_worker", "--nocapture"])
         .env("MOOCP_TEST_UPDATE", params.to_string())
-        .output()
+        .stdin(std::process::Stdio::null())
+        .status()
         .await?;
-    assert!(
-        output.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(status.success(), "Update worker exited with {status}");
     let result: Value = serde_json::from_slice(&fs::read(outcome)?)?;
     Ok(result["result"].as_str().unwrap().to_owned())
 }
