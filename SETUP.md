@@ -10,7 +10,10 @@ Use an existing Moodle URL from the conversation, otherwise ask for it once.
 Never ask for passwords, MFA codes, or cookies in chat.
 
 Find an existing `moocp` executable, or check its normal install location below.
-If present, run `moocp status --check`. A healthy connection only needs client
+If present, run `moocp update --check` and install an available release with
+`moocp update`. If this older executable has no update command, rerun the native
+installer at the same location. Then run `moocp status --check`.
+A healthy connection only needs client
 registration; an expired saved account needs `moocp login`, not a new profile.
 Keep existing accounts and other MCP entries.
 
@@ -88,6 +91,23 @@ alone is not proof of a working connection. State exactly which checks passed.
 
 Finish with one useful prompt, such as “what coursework is due this week?”
 Never run `moocp review` for the student or approve their coursework actions.
+
+## Update it
+
+Run the installed executable with `update`. Use `update --check` to check without
+installing. Moocp verifies the release checksum and executable version, then
+replaces itself at its current path. Accounts, credentials, cache, and CLI
+registrations stay intact. A newer development build is kept.
+
+Restart connected CLI sessions to use the new executable. On Windows, replacement
+finishes after the update command exits; restart connected sessions promptly so
+they release the old executable. A failed replacement keeps or restores the
+previous version. If rollback itself cannot finish, the error identifies the
+saved executable. The first upgrade from versions without `update` needs an
+installer rerun at the original install location.
+
+For a development checkout, use `git pull --ff-only` and `cargo build --locked`,
+then restart the CLI, to keep running your local source build.
 
 ## Remove it
 

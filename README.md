@@ -32,4 +32,5 @@ Chrome, Chromium, or Edge is needed for sign-in.
 Then ask something like “what coursework is due this week?” or “find the lecture
 that explains this and cite it.” Publishing and submitting work get your review.
 
-Remove it with `moocp uninstall` (use the installed binary's full path if needed).
+Update with `moocp update`; check first with `moocp update --check`.
+Remove with `moocp uninstall`. Use the binary's full path if needed.
