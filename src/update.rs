@@ -575,6 +575,8 @@ fn replace_windows(
     crate::config::private_write(&script, include_bytes!("update_windows.ps1"))?;
     let lock = lock_path(executable);
     Command::new("powershell.exe")
+        // A PowerShell 7 parent can otherwise shadow Windows PowerShell's built-in modules.
+        .env_remove("PSModulePath")
         .args([
             "-NoProfile",
             "-NonInteractive",

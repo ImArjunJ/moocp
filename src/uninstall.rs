@@ -697,6 +697,7 @@ Remove-Item -LiteralPath $PSScriptRoot -Recurse -Force
     )?;
     let mut command = Command::new("powershell.exe");
     command
+        .env_remove("PSModulePath")
         .args([
             "-NoProfile",
             "-NonInteractive",
