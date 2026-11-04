@@ -7,7 +7,7 @@ use std::{
 
 use ego_tree::NodeRef;
 use scraper::{Html, Node, Selector};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::error::{Error, Result};
@@ -22,8 +22,9 @@ pub struct Document {
     pub truncated: bool,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Link {
+    pub index: usize,
     pub title: String,
     pub url: String,
 }
@@ -139,7 +140,11 @@ fn walk(node: NodeRef<'_, Node>, base: Option<&Url>, out: &mut String, pre: bool
             if tag == "li" {
                 out.push_str("- ");
             }
-            if matches!(tag, "th" | "td") && !out.ends_with('\n') {
+            if matches!(tag, "th" | "td")
+                && node.prev_siblings().any(|sibling| {
+                    matches!(sibling.value(), Node::Element(element) if matches!(element.name(), "th" | "td"))
+                })
+            {
                 out.push_str(" | ");
             }
             if matches!(tag, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
@@ -206,6 +211,7 @@ pub fn links(source: &str, base: &Url) -> Vec<Link> {
                 return None;
             }
             Some(Link {
+                index: 0,
                 title: element
                     .text()
                     .collect::<Vec<_>>()
@@ -214,6 +220,11 @@ pub fn links(source: &str, base: &Url) -> Vec<Link> {
                     .to_string(),
                 url: safe_url(&url),
             })
+        })
+        .enumerate()
+        .map(|(index, mut link)| {
+            link.index = index;
+            link
         })
         .collect()
 }

@@ -9,6 +9,7 @@ pub mod content;
 pub mod error;
 pub mod moodle;
 pub mod network;
+mod sections;
 pub mod server;
 pub mod store;
 pub mod uninstall;

@@ -182,13 +182,110 @@ impl Http {
         Ok(())
     }
     pub async fn get(&self, url: Url) -> Result<Response> {
-        self.request(Method::GET, url, None, None).await
+        self.request(Method::GET, url, None, None, false).await
     }
+    /// Course-linked material may redirect off-site. Only the Moodle leg receives cookies.
+    pub async fn get_material(&self, url: Url) -> Result<Response> {
+        if self.check_url(&url).is_err() {
+            return self.public_material(url).await;
+        }
+        self.request(Method::GET, url, None, None, true).await
+    }
+
+    async fn public_material(&self, mut url: Url) -> Result<Response> {
+        for _ in 0..8 {
+            if !matches!(url.scheme(), "https" | "http")
+                || !url.username().is_empty()
+                || url.password().is_some()
+            {
+                return Err(Error::invalid(
+                    "Material links require an HTTP(S) URL without credentials.",
+                ));
+            }
+            url = Url::parse(&crate::content::safe_url(&url))
+                .map_err(|_| Error::invalid("Invalid material URL."))?;
+            let host = url
+                .host_str()
+                .ok_or_else(|| Error::invalid("Material URL has no host."))?
+                .trim_start_matches('[')
+                .trim_end_matches(']');
+            let port = url
+                .port_or_known_default()
+                .ok_or_else(|| Error::invalid("Invalid material port."))?;
+            let addresses: Vec<_> = tokio::time::timeout(
+                Duration::from_secs(15),
+                tokio::net::lookup_host((host, port)),
+            )
+            .await
+            .map_err(|_| Error::new("network_timeout", "Material hostname resolution timed out."))?
+            .map_err(|_| Error::new("network_error", "Could not resolve the material hostname."))?
+            .collect();
+            // The configured origin is already trusted, including private university/lab hosts.
+            // New origins must resolve entirely to public addresses; pin those addresses to avoid rebinding.
+            if addresses.is_empty()
+                || (url.origin() != self.site.origin()
+                    && addresses.iter().any(|a| !public_address(a.ip())))
+            {
+                return Err(Error::new(
+                    "external_address",
+                    "External material must be on a public HTTP(S) server. Private and local network destinations are excluded.",
+                ));
+            }
+            let client = Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .resolve_to_addrs(host, &addresses)
+                .timeout(Duration::from_secs(45))
+                .connect_timeout(Duration::from_secs(15))
+                .user_agent(concat!("Moocp/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .map_err(|_| Error::local("Could not initialise material networking."))?;
+            self.pace().await;
+            // This separate client has no cookie jar, authorization, referrer, or Moodle token.
+            let response = client
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(network_error)?;
+            if response.status().is_redirection() {
+                let next = response
+                    .headers()
+                    .get(LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| url.join(v).ok())
+                    .ok_or_else(|| {
+                        Error::new(
+                            "invalid_response",
+                            "Material redirect had no valid location.",
+                        )
+                    })?;
+                url = next;
+                continue;
+            }
+            if !response.status().is_success() {
+                return Err(Error::new(
+                    "material_http_error",
+                    format!(
+                        "Material server returned HTTP {}.",
+                        response.status().as_u16()
+                    ),
+                ));
+            }
+            return read_body(response, url).await;
+        }
+        Err(Error::new(
+            "redirect_limit",
+            "Material redirected too many times.",
+        ))
+    }
+
     pub async fn post_json(&self, url: Url, body: &Value) -> Result<Response> {
-        self.request(Method::POST, url, Some(body), None).await
+        self.request(Method::POST, url, Some(body), None, false)
+            .await
     }
     pub async fn post_form(&self, url: Url, body: &[(String, String)]) -> Result<Response> {
-        self.request(Method::POST, url, None, Some(body)).await
+        self.request(Method::POST, url, None, Some(body), false)
+            .await
     }
 
     async fn pace(&self) {
@@ -231,6 +328,7 @@ impl Http {
         mut url: Url,
         json: Option<&Value>,
         form: Option<&[(String, String)]>,
+        material: bool,
     ) -> Result<Response> {
         for _ in 0..8 {
             self.check_url(&url)?;
@@ -255,7 +353,7 @@ impl Http {
                     request = request.form(form);
                 }
             }
-            let mut response = request.send().await.map_err(network_error)?;
+            let response = request.send().await.map_err(network_error)?;
             let status = response.status();
             if status == StatusCode::UNAUTHORIZED {
                 return Err(Error::auth());
@@ -284,7 +382,10 @@ impl Http {
                 let next = url
                     .join(location)
                     .map_err(|_| Error::new("invalid_response", "Invalid redirect URL."))?;
-                if next.origin() != self.site.origin() {
+                if self.check_url(&next).is_err() {
+                    if material {
+                        return self.public_material(next).await;
+                    }
                     return Err(Error::new(
                         "external_redirect",
                         "Moodle redirected outside its site, possibly for expired SSO. Reconnect with moocp login or open the source in your browser.",
@@ -306,54 +407,7 @@ impl Http {
                     retryable: status.is_server_error(),
                 });
             }
-            if response
-                .content_length()
-                .is_some_and(|n| n > MAX_DOWNLOAD_BYTES as u64)
-            {
-                return Err(Error::new(
-                    "size_limit",
-                    "Resource exceeds the 25 MB download limit.",
-                ));
-            }
-            let content_type = response
-                .headers()
-                .get(CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or_default()
-                .to_string();
-            let filename = response
-                .headers()
-                .get("content-disposition")
-                .and_then(|v| v.to_str().ok())
-                .and_then(disposition_filename)
-                .unwrap_or_else(|| {
-                    url.path_segments()
-                        .and_then(|mut s| s.next_back())
-                        .unwrap_or("resource")
-                        .to_string()
-                });
-            let mut body = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(network_error)? {
-                if body.len() + chunk.len() > MAX_DOWNLOAD_BYTES {
-                    return Err(Error::new(
-                        "size_limit",
-                        "Resource exceeds the 25 MB download limit.",
-                    ));
-                }
-                body.extend_from_slice(&chunk);
-            }
-            if content_type.contains("text/html") {
-                let text = String::from_utf8_lossy(&body);
-                if crate::content::is_login_page(&text) {
-                    return Err(Error::auth());
-                }
-            }
-            return Ok(Response {
-                url,
-                content_type,
-                filename,
-                body,
-            });
+            return read_body(response, url).await;
         }
         Err(Error::new(
             "redirect_limit",
@@ -419,6 +473,82 @@ impl Http {
     }
 }
 
+async fn read_body(mut response: reqwest::Response, url: Url) -> Result<Response> {
+    if response
+        .content_length()
+        .is_some_and(|n| n > MAX_DOWNLOAD_BYTES as u64)
+    {
+        return Err(Error::new(
+            "size_limit",
+            "Resource exceeds the 25 MB download limit.",
+        ));
+    }
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let filename = response
+        .headers()
+        .get("content-disposition")
+        .and_then(|v| v.to_str().ok())
+        .and_then(disposition_filename)
+        .unwrap_or_else(|| {
+            url.path_segments()
+                .and_then(|mut s| s.next_back())
+                .unwrap_or("resource")
+                .to_string()
+        });
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(network_error)? {
+        if body.len() + chunk.len() > MAX_DOWNLOAD_BYTES {
+            return Err(Error::new(
+                "size_limit",
+                "Resource exceeds the 25 MB download limit.",
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if content_type.contains("text/html") {
+        let text = String::from_utf8_lossy(&body);
+        if crate::content::is_login_page(&text) {
+            return Err(Error::auth());
+        }
+    }
+    Ok(Response {
+        url,
+        content_type,
+        filename,
+        body,
+    })
+}
+
+fn public_address(address: std::net::IpAddr) -> bool {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            let [a, b, c, _] = ip.octets();
+            !(ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.is_documentation()
+                || a == 0
+                || a >= 224
+                || (a == 100 && (64..=127).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
+                || (a == 192 && b == 88 && c == 99)
+                || (a == 198 && (b == 18 || b == 19)))
+        }
+        std::net::IpAddr::V6(ip) => {
+            let segments = ip.segments();
+            (0x2000..0x4000).contains(&segments[0])
+                && segments[0] != 0x2002
+                && !(segments[0] == 0x2001 && (segments[1] < 0x200 || segments[1] == 0xdb8))
+        }
+    }
+}
+
 fn disposition_filename(value: &str) -> Option<String> {
     value.split(';').find_map(|part| {
         part.trim()
@@ -449,6 +579,32 @@ fn network_error(error: reqwest::Error) -> Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_material_rejects_private_and_transition_addresses() {
+        for address in [
+            "0.0.0.0",
+            "10.0.0.1",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "172.16.0.1",
+            "192.168.0.1",
+            "192.0.2.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fc00::1",
+            "fe80::1",
+            "2002:7f00:1::",
+            "2001:db8::1",
+        ] {
+            assert!(!public_address(address.parse().unwrap()), "{address}");
+        }
+        for address in ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"] {
+            assert!(public_address(address.parse().unwrap()), "{address}");
+        }
+    }
     #[test]
     fn restricts_origin_and_cookie_path() {
         let credentials = Credentials {

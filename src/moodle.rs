@@ -31,13 +31,7 @@ pub struct Course {
     pub source_url: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct Section {
-    pub id: u64,
-    pub number: Option<u64>,
-    pub title: String,
-    pub summary: String,
-}
+pub use crate::sections::Section;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct File {
@@ -231,6 +225,11 @@ impl Moodle {
             .collect()
     }
     pub async fn outline(&self, course_id: u64) -> Result<Outline> {
+        let mut outline = self.outline_metadata(course_id).await?;
+        self.hydrate_sections(&mut outline).await;
+        Ok(outline)
+    }
+    pub(crate) async fn outline_metadata(&self, course_id: u64) -> Result<Outline> {
         if self.has_token() {
             match self
                 .rest("core_course_get_contents", json!({"courseid":course_id}))
@@ -260,12 +259,12 @@ impl Moodle {
         let mut activities = Vec::new();
         for section in list {
             let sid = section["id"].as_u64().unwrap_or(0);
-            sections.push(Section {
-                id: sid,
-                number: section["section"].as_u64(),
-                title: plain(&section["name"]),
-                summary: plain(&section["summary"]),
-            });
+            sections.push(self.section_metadata(
+                sid,
+                section["section"].as_u64(),
+                plain(&section["name"]),
+                section["summary"].as_str(),
+            ));
             for module in section["modules"].as_array().into_iter().flatten() {
                 let cmid = module["id"]
                     .as_u64()
@@ -327,11 +326,16 @@ impl Moodle {
             .as_array()
             .into_iter()
             .flatten()
-            .map(|s| Section {
-                id: number(&s["id"]).unwrap_or(0),
-                number: number(&s["number"]),
-                title: plain(s.get("title").unwrap_or(&s["name"])),
-                summary: plain(&s["summary"]),
+            .map(|s| {
+                self.section_metadata(
+                    number(&s["id"]).unwrap_or(0),
+                    number(s.get("number").unwrap_or(&s["section"])),
+                    plain(s.get("title").unwrap_or(&s["name"])),
+                    s["summary"]
+                        .as_str()
+                        .or_else(|| s["summary"]["summarytext"].as_str())
+                        .or_else(|| (s["hassummary"] == false).then_some("")),
+                )
             })
             .collect();
         let mut activities = Vec::new();
@@ -393,58 +397,62 @@ impl Moodle {
             .get(self.http.url(&format!("course/view.php?id={course_id}"))?)
             .await?;
         let text = response.text()?;
-        let html = scraper::Html::parse_document(&text);
-        let mut activities = BTreeMap::new();
-        for link in html.select(&content::selector(
-            "#region-main a[href], [role=main] a[href]",
-        )) {
-            let Some(url) = link
-                .value()
-                .attr("href")
-                .and_then(|s| response.url.join(s).ok())
-            else {
-                continue;
-            };
-            if url.origin() != self.profile.url.origin() {
-                continue;
+        let sections = self.sections_from_html(&text);
+        let activities = {
+            let html = scraper::Html::parse_document(&text);
+            let mut activities = BTreeMap::new();
+            for link in html.select(&content::selector(
+                "#region-main a[href], [role=main] a[href]",
+            )) {
+                let Some(url) = link
+                    .value()
+                    .attr("href")
+                    .and_then(|s| response.url.join(s).ok())
+                else {
+                    continue;
+                };
+                if url.origin() != self.profile.url.origin() {
+                    continue;
+                }
+                let relative = url
+                    .path()
+                    .strip_prefix(self.profile.url.path())
+                    .unwrap_or_default();
+                let components: Vec<_> = relative.split('/').collect();
+                if components.len() != 3 || components[0] != "mod" || components[2] != "view.php" {
+                    continue;
+                }
+                let Some(cmid) = query_id(&url, "id") else {
+                    continue;
+                };
+                let title = link.text().collect::<Vec<_>>().join(" ").trim().to_string();
+                activities.entry(cmid).or_insert(Activity {
+                    module_id: cmid,
+                    course_id,
+                    instance_id: None,
+                    kind: components[1].into(),
+                    accessible: true,
+                    title,
+                    section_id: None,
+                    source_url: content::safe_url(&url),
+                    description: String::new(),
+                    availability: None,
+                    completion: None,
+                    files: vec![],
+                });
             }
-            let relative = url
-                .path()
-                .strip_prefix(self.profile.url.path())
-                .unwrap_or_default();
-            let components: Vec<_> = relative.split('/').collect();
-            if components.len() != 3 || components[0] != "mod" || components[2] != "view.php" {
-                continue;
-            }
-            let Some(cmid) = query_id(&url, "id") else {
-                continue;
-            };
-            let title = link.text().collect::<Vec<_>>().join(" ").trim().to_string();
-            activities.entry(cmid).or_insert(Activity {
-                module_id: cmid,
-                course_id,
-                instance_id: None,
-                kind: components[1].into(),
-                accessible: true,
-                title,
-                section_id: None,
-                source_url: content::safe_url(&url),
-                description: String::new(),
-                availability: None,
-                completion: None,
-                files: vec![],
-            });
-        }
-        if activities.is_empty() {
+            activities
+        };
+        if activities.is_empty() && sections.is_empty() {
             return Err(Error::new(
                 "unsupported_course_format",
-                "This course format exposed no readable activity links. Open the source URL in Moodle.",
+                "This course format exposed no identifiable sections or activities. Open the source URL in Moodle.",
             ));
         }
-        Ok(Outline{course_id,sections:vec![],activities:activities.into_values().collect(),transport:"html".into(),observed_at:chrono::Utc::now().to_rfc3339(),warnings:vec!["Course-format AJAX unavailable. HTML fallback cannot guarantee complete section/restriction metadata.".into()]})
+        Ok(Outline{course_id,sections,activities:activities.into_values().collect(),transport:"html".into(),observed_at:chrono::Utc::now().to_rfc3339(),warnings:vec!["Course-format AJAX unavailable. HTML fallback cannot guarantee complete section/restriction metadata.".into()]})
     }
     pub async fn activity(&self, course_id: u64, module_id: u64) -> Result<Activity> {
-        self.outline(course_id)
+        self.outline_metadata(course_id)
             .await?
             .activities
             .into_iter()
@@ -627,6 +635,16 @@ impl Moodle {
                 "Forum reply target verification currently requires mobile service access.",
             ))
         }
+    }
+    pub async fn material_response(&self, source: &str) -> Result<Response> {
+        let mut url = Url::parse(source).map_err(|_| Error::invalid("Invalid material URL."))?;
+        if self.http.check_url(&url).is_ok()
+            && url.path().contains("/webservice/pluginfile.php")
+            && let Some(token) = self.credentials.token.as_deref()
+        {
+            url.query_pairs_mut().append_pair("token", token);
+        }
+        self.http.get_material(url).await
     }
     pub async fn file_response(&self, file: &File) -> Result<Response> {
         let mut url =

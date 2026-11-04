@@ -121,7 +121,8 @@ impl Store {
             ORDER BY bm25(document_search,5.0,1.0),d.reference LIMIT ?4 OFFSET ?5",
         )?;
         let rows = statement.query_map(params![expression,profile,course,(limit+1) as i64,offset_sql], |row| {
-            Ok(json!({"reference":row.get::<_,String>(0)?,"course_id":row.get::<_,i64>(1)? as u64,"module_id":row.get::<_,i64>(2)? as u64,"title":row.get::<_,String>(3)?,"source_url":row.get::<_,String>(4)?,"observed_at":row.get::<_,String>(5)?,"passage":row.get::<_,String>(6)?}))
+            let module_id = row.get::<_,i64>(2)?;
+            Ok(json!({"reference":row.get::<_,String>(0)?,"course_id":row.get::<_,i64>(1)? as u64,"module_id":(module_id != 0).then_some(module_id),"title":row.get::<_,String>(3)?,"source_url":row.get::<_,String>(4)?,"observed_at":row.get::<_,String>(5)?,"passage":row.get::<_,String>(6)?}))
         })?;
         let mut results = rows.collect::<std::result::Result<Vec<_>, _>>()?;
         let has_more = results.len() > limit;
@@ -220,6 +221,17 @@ impl Store {
 }
 
 impl CachedDocument {
+    pub fn links(&self) -> Vec<crate::content::Link> {
+        if (self.mime.contains("html")
+            || self.filename.ends_with(".html")
+            || self.filename.ends_with(".htm"))
+            && let Ok(base) = url::Url::parse(&self.url)
+        {
+            return crate::content::links(&String::from_utf8_lossy(&self.bytes), &base);
+        }
+        vec![]
+    }
+
     pub fn extracted(
         reference: String,
         course_id: u64,

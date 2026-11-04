@@ -55,3 +55,18 @@ fn pdf_passages_have_page_locations() {
     assert!(document.text.contains("negative gradient"));
     assert!(document.warnings.iter().any(|w| w.contains("diagrams")));
 }
+
+#[test]
+fn html_tables_keep_empty_columns_and_link_destinations() {
+    let base = url::Url::parse("https://moodle.example/course/section.php?id=13925").unwrap();
+    let text = content::html_text(
+        "<table><tr><th>Week</th><th>Date</th><th>Slides</th><th>Handouts</th></tr><tr><td></td><td>30 October</td><td><a href='../pluginfile.php/slides.pdf'>Slides</a></td><td></td></tr></table>",
+        Some(&base),
+    );
+    assert!(text.contains("Week | Date | Slides | Handouts"));
+    assert!(
+        text.contains(
+            " | 30 October | Slides (https://moodle.example/pluginfile.php/slides.pdf) |"
+        )
+    );
+}
