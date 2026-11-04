@@ -17,7 +17,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: macos-latest
+          # Keep releases independent of Apple silicon runner capacity.
+          - os: macos-15-intel
             target: aarch64-apple-darwin
           - os: macos-15-intel
             target: x86_64-apple-darwin
@@ -30,6 +31,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked
       - run: cargo build --release --locked
+      - name: Build Apple silicon executable
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
       - name: Verify tag matches executable
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
@@ -43,7 +49,11 @@ jobs:
           MOOCP_RELEASE_TARGET: ${{ matrix.target }}
         run: |
           mkdir -p dist/package
-          cp target/release/moocp dist/package/
+          task_binary=target/release/moocp
+          if [ "$MOOCP_RELEASE_TARGET" = aarch64-apple-darwin ]; then
+            task_binary=target/aarch64-apple-darwin/release/moocp
+          fi
+          cp "$task_binary" dist/package/
           cp README.md LICENSE SETUP.md dist/package/
           task_archive="moocp-$MOOCP_RELEASE_TARGET.tar.gz"
           tar -czf "dist/$task_archive" -C dist/package .
