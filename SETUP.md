@@ -126,3 +126,20 @@ For a development checkout, keep the binary:
 
 Use `--profile NAME uninstall` to remove one account and keep other accounts.
 An executable still used by another registration or running Moocp session is kept.
+
+## Evaluate changes
+
+`cargo test --locked` runs deterministic checks, including synthetic student
+workflows. An opt-in agent benchmark uses an installed, signed-in Codex CLI:
+
+```sh
+cargo build --locked
+cargo run --locked --example evaluate -- --case personal-deadline --output target/evaluation.json
+```
+
+Omit `--case` to run all tasks. `--transport session` tests browser-session access;
+`--model NAME` pins the model. The runner uses temporary synthetic accounts,
+ignores the user's Codex configuration, and exposes a small allowlist of read
+tools. It reports task correctness, citations, tool calls, response bytes,
+latency, and token usage when the CLI supplies it. Agent runs consume the CLI's
+normal usage; they are separate from deterministic CI results.
