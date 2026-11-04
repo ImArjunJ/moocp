@@ -474,6 +474,47 @@ impl Moodle {
                 }),
             ));
         }
+        if activity.kind == "label" {
+            let mut response = self
+                .http
+                .get(
+                    self.http
+                        .url(&format!("course/view.php?id={}", activity.course_id))?,
+                )
+                .await?;
+            let fragment = {
+                let html = scraper::Html::parse_document(&response.text()?);
+                let module = html
+                    .select(&content::selector(&format!(
+                        "#module-{}",
+                        activity.module_id
+                    )))
+                    .next()
+                    .ok_or_else(|| {
+                        Error::new(
+                            "activity_not_found",
+                            "The course page did not expose this label.",
+                        )
+                    })?;
+                module
+                    .select(&content::selector(
+                        ".activity-altcontent, .contentafterlink",
+                    ))
+                    .next()
+                    .map(|e| e.inner_html())
+                    .unwrap_or_else(|| module.inner_html())
+            };
+            response
+                .url
+                .set_fragment(Some(&format!("module-{}", activity.module_id)));
+            response.body = format!(
+                "<main><h1>{}</h1>{fragment}</main>",
+                html_escape::encode_text(&activity.title)
+            )
+            .into_bytes();
+            response.content_type = "text/html; charset=utf-8".into();
+            return Ok(response);
+        }
         if self.has_token() && matches!(activity.kind.as_str(), "page" | "assign" | "quiz") {
             let function = match activity.kind.as_str() {
                 "page" => "mod_page_get_pages_by_courses",

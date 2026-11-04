@@ -64,7 +64,10 @@ impl Store {
                 id TEXT PRIMARY KEY, profile TEXT NOT NULL, payload TEXT NOT NULL,
                 preview TEXT NOT NULL, preconditions TEXT NOT NULL, status TEXT NOT NULL,
                 created_at TEXT NOT NULL, expires_at TEXT NOT NULL, receipt TEXT);
-            PRAGMA user_version=1;")?;
+            CREATE TABLE IF NOT EXISTS catalogue_links (
+                profile TEXT NOT NULL, reference TEXT NOT NULL, payload TEXT NOT NULL,
+                UNIQUE(profile,reference));
+            PRAGMA user_version=2;")?;
         Ok(Self { db })
     }
     pub fn cache(&self, profile: &str, document: &CachedDocument) -> Result<()> {
@@ -83,6 +86,37 @@ impl Store {
         Ok(self.db.query_row("SELECT reference,course_id,module_id,title,url,filename,mime,text,warnings,truncated,observed_at,bytes FROM documents WHERE profile=?1 AND reference=?2", params![profile,reference], |row| {
             Ok(CachedDocument { reference:row.get(0)?,course_id:row.get::<_,i64>(1)? as u64,module_id:row.get::<_,i64>(2)? as u64,title:row.get(3)?,url:row.get(4)?,filename:row.get(5)?,mime:row.get(6)?,text:row.get(7)?,warnings:serde_json::from_str(&row.get::<_,String>(8)?).unwrap_or_default(),truncated:row.get(9)?,observed_at:row.get(10)?,bytes:row.get(11)? })
         }).optional()?)
+    }
+    pub fn remember_material(&self, profile: &str, link: &crate::materials::Link) -> Result<()> {
+        self.db.execute("INSERT INTO catalogue_links(profile,reference,payload) VALUES(?1,?2,?3) ON CONFLICT(profile,reference) DO UPDATE SET payload=excluded.payload", params![profile,link.reference,serde_json::to_string(link)?])?;
+        Ok(())
+    }
+    pub fn material(
+        &self,
+        profile: &str,
+        reference: &str,
+    ) -> Result<Option<crate::materials::Link>> {
+        let value: Option<String> = self
+            .db
+            .query_row(
+                "SELECT payload FROM catalogue_links WHERE profile=?1 AND reference=?2",
+                params![profile, reference],
+                |row| row.get(0),
+            )
+            .optional()?;
+        value
+            .map(|value| serde_json::from_str(&value).map_err(Error::from))
+            .transpose()
+    }
+    pub fn indexed_at(&self, profile: &str, reference: &str) -> Result<Option<String>> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT observed_at FROM documents WHERE profile=?1 AND reference=?2",
+                params![profile, reference],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
     pub fn search(
         &self,
@@ -137,6 +171,8 @@ impl Store {
         Ok(json!(rows.collect::<std::result::Result<Vec<_>, _>>()?))
     }
     pub fn clear_profile(&self, profile: &str) -> Result<()> {
+        self.db
+            .execute("DELETE FROM catalogue_links WHERE profile=?1", [profile])?;
         self.db
             .execute("DELETE FROM documents WHERE profile=?1", [profile])?;
         self.db

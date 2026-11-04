@@ -23,6 +23,7 @@ pub const CUTOFF: i64 = DUE + 172800;
 #[derive(Default)]
 pub struct Traffic {
     pub requests: Mutex<HashMap<String, usize>>,
+    pub resource_locked: std::sync::atomic::AtomicBool,
 }
 impl Traffic {
     pub fn record(&self, name: &str) {
@@ -126,7 +127,17 @@ fn module(site: &Site, id: u64, instance: u64, kind: &str, name: &str, visible: 
     json!({"id":id,"instance":instance,"modname":kind,"module":kind,"name":name,"uservisible":visible,"sectionid":5101,"url":site.root.join(&format!("mod/{kind}/view.php?id={id}")).unwrap().as_str(),"contents":[]})
 }
 fn modules(site: &Site) -> Vec<Value> {
-    let mut resource = module(site, 8, 80, "resource", "Original slides", true);
+    let mut resource = module(
+        site,
+        8,
+        80,
+        "resource",
+        "Original slides",
+        !site
+            .traffic
+            .resource_locked
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
     resource["contents"] = json!([{"type":"file","filename":"lecture.pdf","mimetype":"application/pdf","filesize":1024,"fileurl":site.root.join("pluginfile.php/lecture.pdf").unwrap().as_str()}]);
     vec![
         module(site, 7, 70, "page", "Lecture notes", true),

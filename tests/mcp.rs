@@ -8,8 +8,10 @@ async fn subprocess_handshake_discovery_and_unconfigured_errors() -> anyhow::Res
     command.arg("--data-dir").arg(directory.path()).arg("serve");
     let client = ().serve(TokioChildProcess::new(command)?).await?;
     let tools = client.list_all_tools().await?;
-    assert_eq!(tools.len(), 26);
+    assert_eq!(tools.len(), 28);
     for name in [
+        "moodle_list_materials",
+        "moodle_get_coursework",
         "moodle_browser_open",
         "moodle_browser_tabs",
         "moodle_browser_switch_tab",
