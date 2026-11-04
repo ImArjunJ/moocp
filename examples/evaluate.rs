@@ -24,6 +24,9 @@ enum Transport {
     about = "Evaluate student tasks against an isolated synthetic Moodle using your Codex CLI."
 )]
 struct Args {
+    /// List available synthetic tasks without starting an agent.
+    #[arg(long)]
+    list: bool,
     #[arg(long)]
     case: Option<String>,
     #[arg(long)]
@@ -44,6 +47,14 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if args.list {
+        let tasks: Vec<_> = evaluation::cases()
+            .iter()
+            .map(|case| json!({"id":case.id,"prompt":case.prompt,"transports":case.transports}))
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&tasks)?);
+        return Ok(());
+    }
     anyhow::ensure!(
         (1..=10).contains(&args.repeat) && (1..=1800).contains(&args.timeout),
         "Use repeat 1–10 and timeout 1–1800 seconds."

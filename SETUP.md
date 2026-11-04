@@ -137,7 +137,7 @@ cargo build --locked
 cargo run --locked --example evaluate -- --case personal-deadline --output target/evaluation.json
 ```
 
-Omit `--case` to run all tasks. `--transport session` tests browser-session access;
+Use `--list` to inspect tasks without starting an agent. Omit `--case` to run all tasks. `--transport session` tests browser-session access;
 `--model NAME` pins the model. The runner uses temporary synthetic accounts,
 ignores the user's Codex configuration, and exposes a small allowlist of read
 tools. It reports task correctness, citations, tool calls, response bytes,
